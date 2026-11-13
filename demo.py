@@ -1,3 +1,4 @@
+import logging
 import sys
 
 from agent.agent import Agent
@@ -21,6 +22,7 @@ class BrokenLLM:
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
+    logging.basicConfig(level=logging.INFO, format="[trace] %(message)s")
     agent = Agent()
     for m in MESSAGES:
         print(m, "->", agent.run(m))

@@ -1,6 +1,6 @@
 # Scalable Agentic System (retrieval-based tool routing)
 
-Setup: `pip install openai` and set `GROQ_API_KEY` (required).
+Setup: `pip install -r requirements.txt` and set `GROQ_API_KEY` (required).
 Run: `python demo.py` or `python main.py` for chat.
 
 ## Core idea
@@ -9,6 +9,25 @@ The LLM never sees all tools. Per turn:
 ```
 user msg -> Tool Retriever (top-K of N) -> LLM sees K tools only -> validate args -> execute -> loop/answer
                                                   + rag_search + system_search are ordinary tools in the same index
+```
+
+Architecture:
+
+```mermaid
+flowchart LR
+    U[User chat] --> A[Agent loop]
+    A --> R[Tool Registry<br/>TF-IDF index of all tools]
+    R -->|top-5 shortlist| L[Groq LLM]
+    L -->|tool + args| V{Validate}
+    V -->|missing param| U
+    V -->|unknown tool| R
+    V -->|ok| E[Execute with retry]
+    E --> P[PayPal API tools]
+    E --> G[rag_search<br/>knowledge base]
+    E --> S[system_search<br/>tool catalog + request log]
+    E -->|result| L
+    L -->|final answer| U
+    A -.-> T[Logging / trace]
 ```
 
 Accuracy depends on K (about 5), not N. Going from 50 to 5000 tools only grows the index.
@@ -37,7 +56,9 @@ Accuracy depends on K (about 5), not N. Going from 50 to 5000 tools only grows t
 I'd move to LangGraph in production for checkpointing and confirmation steps, keeping this retriever as the routing node.
 
 ## Observability
-Use LangSmith (set `LANGSMITH_TRACING=true`, wrap `Agent.run` and `_execute` with `@traceable`) or Langfuse/OpenTelemetry. Track retrieval recall@K (was the right tool in the shortlist?), tool-call success rate, latency, and cost.
+Built in: every tool call is logged through Python's `logging` (tool name, success, latency in ms, and the shortlist the LLM saw). `demo.py` prints these as `[trace]` lines. LLM failures are logged with the full exception. No external service is needed.
+
+For production, forward these logs to a tracing backend such as Langfuse or OpenTelemetry. Track retrieval recall@K (was the right tool in the shortlist?), tool-call success rate, latency, and cost.
 
 ## Real-LLM behavior
 - `Agent` keeps the conversation per instance (last 20 messages). If it asks for a missing value, the next message is combined with the original request, so "bob@x.com" completes "Send an invoice for $75".

@@ -1,4 +1,4 @@
-import json, logging, os
+import json, logging, os, time
 from openai import OpenAI
 from .retriever import Retriever
 from .tools import Tool, REQUEST_LOG, build_api_tools, rag_search, make_system_search
@@ -106,7 +106,10 @@ class Agent:
                 self.pending = query
                 return self._reply(f"To use {tool.name} I need: {', '.join(missing)}.")
             # execute; on error, exclude the tool so another is tried
+            start = time.perf_counter()
             result = self._execute(tool, args)
+            log.info("tool=%s ok=%s ms=%d shortlist=%s", tool.name, "error" not in result,
+                     (time.perf_counter() - start) * 1000, [t.name for t in shortlist])
             REQUEST_LOG.append({"message": message, "tool": tool.name, "ok": "error" not in result})
             if "error" in result:
                 excluded.add(tool.name)

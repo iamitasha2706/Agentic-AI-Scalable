@@ -55,12 +55,28 @@ def load_postman(path: str) -> list[Tool]:
             else:
                 yield it
 
+    def params_of(req):
+        url = req.get("url", {})
+        url = url if isinstance(url, dict) else {}
+        names = [q["key"] for q in url.get("query", []) if q.get("key")]
+        names += [v["key"] for v in url.get("variable", []) if v.get("key")]
+        raw = (req.get("body") or {}).get("raw", "")
+        try:
+            body = json.loads(raw) if raw else {}
+            names += list(body) if isinstance(body, dict) else []
+        except ValueError:
+            pass
+        return {n: {"type": "string", "required": False} for n in dict.fromkeys(names)}
+
     data = json.load(open(path, encoding="utf-8"))
     tools = []
     for it in walk(data.get("item", [])):
+        req = it.get("request", {})
         name = "".join(c if c.isalnum() else "_" for c in it["name"]).lower()
-        desc = it.get("request", {}).get("description", "") or it["name"]
-        tools.append(Tool(name, str(desc)[:300], {}, _mock(name)))
+        desc = req.get("description", "") or it["name"]
+        if isinstance(desc, dict):
+            desc = desc.get("content", "")
+        tools.append(Tool(name, str(desc)[:300], params_of(req), _mock(name)))
     return tools
 
 
