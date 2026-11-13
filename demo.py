@@ -1,3 +1,7 @@
+import sys
+
+sys.stdout.reconfigure(encoding="utf-8")
+
 from agent.agent import Agent
 
 a = Agent()

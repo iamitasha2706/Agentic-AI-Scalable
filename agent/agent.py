@@ -48,9 +48,13 @@ class OpenAILLM:
               "Use a tool when needed. Never invent parameter values; if a required value is missing, "
               "ask the user for it. After tool results arrive, answer the user concisely.")
 
-    def __init__(self, model="gpt-4o-mini"):
+    def __init__(self, model="openai/gpt-oss-20b"):
         from openai import OpenAI
-        self.client = OpenAI(max_retries=3, timeout=30)
+        self.client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=os.getenv("GROQ_API_KEY"),
+            max_retries=3, timeout=30,
+        )
         self.model = model
 
     def decide(self, query, conversation, tools, history):
@@ -87,7 +91,7 @@ class Agent:
                  ["what tools available", "status", "last request"]),
         ]
         self.registry = reg_holder["r"] = ToolRegistry(tools)
-        self.llm = llm or (OpenAILLM() if os.getenv("OPENAI_API_KEY") else MockLLM())
+        self.llm = llm or (OpenAILLM() if os.getenv("GROQ_API_KEY") else MockLLM())
         self.conversation: list[dict] = []
         self.pending: str | None = None
 

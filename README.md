@@ -1,43 +1,8 @@
 # Scalable Agentic System (retrieval-based tool routing)
 
 Run: `python demo.py` (offline mock LLM) or `python main.py` for chat.
-With `OPENAI_API_KEY` set and `pip install openai`, a real LLM is used automatically.
+With `GROQ_API_KEY` set and `pip install openai`, a real LLM (Groq) is used automatically.
 
-## Core idea
-The LLM never sees all tools. Per turn:
-
-```
-user msg -> Tool Retriever (top-K of N) -> LLM sees K tools only -> validate args -> execute -> loop/answer
-                                                  + rag_search + system_search are ordinary tools in the same index
-```
-
-Accuracy depends on K (about 5), not N. Going from 50 to 5000 tools only grows the index.
-
-## Components (`agent/`)
-- `tools.py`: Tool = name, description, param schema, handler. `load_postman()` builds tools from a Postman collection. Includes `rag_search` (knowledge base) and `system_search` (capabilities and request log).
-- `retriever.py`: TF-IDF retriever over tool name, description, and tags.
-- `agent.py`: `ToolRegistry`, LLM backends (Mock/OpenAI), and the agent loop.
-
-## Design answers
-- **Agent structure**: one agent with a tool loop. A single agent is enough because retrieval keeps the choice small. For 500+ APIs across services, add a router that picks a service (PayPal, Stripe...) and then a per-service agent, which is still the same retrieval idea.
-- **Tool selection and routing**: hybrid retrieval (BM25/TF-IDF plus embeddings, then optional reranker) over tool descriptions. Pin a few always-available tools (RAG, system search). Index quality matters, so write good descriptions and example queries per tool.
-- **State management**: the loop keeps `history` of tool results per request. Production: persist conversation and results by session in Redis/Postgres (LangGraph checkpointer). `REQUEST_LOG` backs "status of my last request".
-- **Scalability**: tools are data, not prompt text. Use a vector DB (pgvector/Qdrant) for thousands of tools. The agent is stateless, so scale it horizontally. Cache embeddings and tool schemas. Cap steps and tokens.
-- **Error handling**: missing required params make the agent ask the user instead of guessing. A hallucinated tool name (not in the shortlist) is excluded and retried. Handler exceptions are retried once, then the tool is excluded so the agent tries another. A step cap prevents loops. Write actions (payments, refunds) should require user confirmation before execution (not implemented in this demo).
-
-## Framework choice and trade-offs
-| Option | Pros | Cons |
-|---|---|---|
-| **From scratch (used here)** | Tiny, transparent, no deps, easy to test | You build persistence, streaming, and retries yourself |
-| LangGraph | Checkpointed state, human-in-the-loop, graph control flow | More concepts. Overkill for a simple loop |
-| LangChain / LlamaIndex | Many integrations, strong RAG tools (LlamaIndex) | Heavy abstractions, harder to debug |
-| CrewAI | Multi-agent roles | Extra LLM calls and latency. Not needed for tool routing |
-| DSPy | Optimizes prompts against a metric | Needs a labelled eval set |
-
-I'd move to LangGraph in production for checkpointing and confirmation steps, keeping this retriever as the routing node.
-
-## Observability
-Use LangSmith (set `LANGSMITH_TRACING=true`, wrap `Agent.run` and `_execute` with `@traceable`) or Langfuse/OpenTelemetry. Track retrieval recall@K (was the right tool in the shortlist?), tool-call success rate, latency, and cost.
 
 ## Real-LLM behavior
 - `Agent` keeps the conversation per instance (last 20 messages). If it asks for a missing value, the next message is combined with the original request, so "bob@x.com" completes "Send an invoice for $75".
@@ -77,3 +42,5 @@ def decide(self, query, conversation, tools, history) -> dict:
 
 ## Limitations
 The mock LLM and TF-IDF retriever are simple stand-ins. The PayPal handlers are mocks, not real API calls. Single tool call per step. Multi-step sequences work through the loop only with a real LLM.
+2. Set `GROQ_API_KEY` (never commit it). The `openai` SDK is pointed at Groq's OpenAI-compatible endpoint.
+3. The model is `openai/gpt-oss-20b` by default (`OpenAILLM.__init__` in `agent/agent.py`). It must support tool calling. To use OpenAI itself, change `base_url`, the key variable and the model name.
