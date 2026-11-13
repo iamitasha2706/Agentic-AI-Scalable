@@ -1,7 +1,7 @@
 # Scalable Agentic System (retrieval-based tool routing)
 
-Run: `python demo.py` (offline mock LLM) or `python main.py` for chat.
-With `GROQ_API_KEY` set and `pip install openai`, a real LLM (Groq) is used automatically.
+Setup: `pip install openai` and set `GROQ_API_KEY` (required).
+Run: `python demo.py` or `python main.py` for chat.
 
 ## Core idea
 The LLM never sees all tools. Per turn:
@@ -16,7 +16,7 @@ Accuracy depends on K (about 5), not N. Going from 50 to 5000 tools only grows t
 ## Components (`agent/`)
 - `tools.py`: Tool = name, description, param schema, handler. `load_postman()` builds tools from a Postman collection. Includes `rag_search` (knowledge base) and `system_search` (capabilities and request log).
 - `retriever.py`: TF-IDF retriever over tool name, description, and tags.
-- `agent.py`: `ToolRegistry`, LLM backends (Mock/OpenAI), and the agent loop.
+- `agent.py`: `ToolRegistry`, the Groq LLM backend, and the agent loop.
 
 ## Design answers
 - **Agent structure**: one agent with a tool loop. A single agent is enough because retrieval keeps the choice small. For 500+ APIs across services, add a router that picks a service (PayPal, Stripe...) and then a per-service agent, which is still the same retrieval idea.
@@ -41,7 +41,7 @@ Use LangSmith (set `LANGSMITH_TRACING=true`, wrap `Agent.run` and `_execute` wit
 
 ## Real-LLM behavior
 - `Agent` keeps the conversation per instance (last 20 messages). If it asks for a missing value, the next message is combined with the original request, so "bob@x.com" completes "Send an invoice for $75".
-- `OpenAILLM` uses SDK retries with backoff (`max_retries=3`, 30s timeout). Any remaining LLM failure returns a friendly message instead of crashing.
+- `GroqLLM` uses SDK retries with backoff (`max_retries=3`, 30s timeout). Any remaining LLM failure returns a friendly message instead of crashing.
 - Tool results are sent in the standard format (assistant `tool_calls`, then a `tool` message with the matching id).
 
 ## Notes for developers
@@ -62,7 +62,7 @@ def decide(self, query, conversation, tools, history) -> dict:
 ### Enabling the real LLM
 1. Python 3.9 or newer, and `pip install openai` (pin the version).
 2. Set `GROQ_API_KEY` (never commit it). The `openai` SDK is pointed at Groq's OpenAI-compatible endpoint.
-3. The model is `openai/gpt-oss-20b` by default (`OpenAILLM.__init__` in `agent/agent.py`). It must support tool calling. To use OpenAI itself, change `base_url`, the key variable and the model name.
+3. The model is `openai/gpt-oss-20b` by default (`GroqLLM.__init__` in `agent/agent.py`). It must support tool calling. To use OpenAI itself, change `base_url`, the key variable and the model name.
 4. Run `python demo.py` and check each message calls the expected tool (create_invoice, sales_report, list_disputes, system_search, rag_search). A request with a missing email should ask for it.
 
 ### Using your own Postman collection
@@ -73,7 +73,7 @@ def decide(self, query, conversation, tools, history) -> dict:
 - No user confirmation before payments and refunds.
 - Retrieval is word-based. Use embeddings so synonyms ("bill someone") find the right tool.
 - Conversation and request log are in memory only. Persist them per session for production.
-- The OpenAI path has not been run against the real API.
+- The Groq path has not been run against the real API by the author of this code.
 
 ## Limitations
-The mock LLM and TF-IDF retriever are simple stand-ins. The PayPal handlers are mocks, not real API calls. Single tool call per step. Multi-step sequences work through the loop only with a real LLM.
+The TF-IDF retriever is a simple stand-in. The PayPal handlers are mocks, not real API calls. Single tool call per step.

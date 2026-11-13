@@ -1,4 +1,5 @@
-import json, logging, os, re
+import json, logging, os
+from openai import OpenAI
 from .retriever import Retriever
 from .tools import Tool, REQUEST_LOG, build_api_tools, rag_search, make_system_search
 
@@ -21,38 +22,19 @@ class ToolRegistry:
         return [t for t in hits if t.name not in exclude][:k]
 
 
-# Offline LLM stand-in: picks the top tool and extracts params with regex
-class MockLLM:
-    def decide(self, query, conversation, tools, history):
-        if history:
-            return {"final": f"Done. Result: {json.dumps(history[-1]['result'])}"}
-        if not tools:
-            return {"final": "I couldn't find a tool for that."}
-        tool = tools[0]
-        args = {}
-        email = re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", query)
-        amount = re.search(r"\$?(\d+(?:\.\d+)?)", query)
-        uid = re.search(r"user_\w+", query)
-        for p in tool.params:
-            if p == "query": args[p] = query
-            elif p == "email" and email: args[p] = email.group()
-            elif p == "amount" and amount: args[p] = float(amount.group(1))
-            elif p == "user_id" and uid: args[p] = uid.group()
-            elif p == "period": args[p] = "last_month" if "last month" in query.lower() else "all"
-        return {"tool": tool.name, "args": args}
-
-
-# Real LLM via OpenAI function calling; only the shortlisted tools are sent
-class OpenAILLM:
+# Groq LLM (OpenAI-compatible function calling); only the shortlisted tools are sent
+class GroqLLM:
     SYSTEM = ("You are an assistant that uses tools to act on a PayPal account. "
               "Use a tool when needed. Never invent parameter values; if a required value is missing, "
               "ask the user for it. After tool results arrive, answer the user concisely.")
 
     def __init__(self, model="openai/gpt-oss-20b"):
-        from openai import OpenAI
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            raise RuntimeError("GROQ_API_KEY is not set")
         self.client = OpenAI(
             base_url="https://api.groq.com/openai/v1",
-            api_key=os.getenv("GROQ_API_KEY"),
+            api_key=api_key,
             max_retries=3, timeout=30,
         )
         self.model = model
@@ -80,20 +62,18 @@ class OpenAILLM:
 # One Agent instance = one chat session
 class Agent:
     def __init__(self, llm=None):
-        tools = build_api_tools()
-        reg_holder = {}
-        tools += [
-            Tool("rag_search", "Search knowledge base docs guides policy rules how to", {"query": {"type": "string", "required": True}},
-                 lambda query: rag_search(query), ["documentation", "policy", "can i", "within"]),
-            Tool("system_search", "Search available tools capabilities and request status history",
-                 {"query": {"type": "string", "required": True}},
-                 lambda query: make_system_search(lambda q, k: reg_holder["r"].search(q, k))(query),
+        query_param = {"query": {"type": "string", "required": True}}
+        tools = build_api_tools() + [
+            Tool("rag_search", "Search knowledge base docs guides policy rules how to", query_param,
+                 rag_search, ["documentation", "policy", "can i", "within"]),
+            Tool("system_search", "Search available tools capabilities and request status history", query_param,
+                 make_system_search(lambda q, k: self.registry.search(q, k)),
                  ["what tools available", "status", "last request"]),
         ]
-        self.registry = reg_holder["r"] = ToolRegistry(tools)
-        self.llm = llm or (OpenAILLM() if os.getenv("GROQ_API_KEY") else MockLLM())
+        self.registry = ToolRegistry(tools)
+        self.llm = llm or GroqLLM()
         self.conversation: list[dict] = []
-        self.pending: str | None = None
+        self.pending = None
 
     def _reply(self, text: str) -> str:
         self.conversation.append({"role": "assistant", "content": text})
